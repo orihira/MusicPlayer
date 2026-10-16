@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="MP3Player">
+<meta name="theme-color" content="#111418">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>MP3 Player</title>
+<style>
+:root{--bg:#111418;--card:#1b2027;--fg:#eef1f5;--sub:#8b95a3;--ac:#ff8a3d}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:-apple-system,system-ui,sans-serif;display:flex;flex-direction:column;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+header{display:flex;gap:8px;padding:12px;align-items:center}
+header input[type=search]{flex:1;padding:10px 12px;border-radius:10px;border:0;background:var(--card);color:var(--fg);font-size:16px}
+button{font:inherit;color:var(--fg);background:var(--card);border:0;border-radius:10px;padding:10px 14px;cursor:pointer}
+button.on{background:var(--ac);color:#111}
+#list{flex:1;overflow-y:auto;padding:0 12px}
+.t{display:flex;align-items:center;gap:8px;padding:12px;border-radius:10px;margin-bottom:4px}
+.t.cur{background:var(--card);color:var(--ac)}
+.t .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.t .x{background:none;color:var(--sub);padding:6px 10px}
+#empty{color:var(--sub);text-align:center;margin-top:20vh;line-height:1.8}
+footer{background:var(--card);padding:12px 16px calc(12px + env(safe-area-inset-bottom));border-radius:18px 18px 0 0}
+#title{text-align:center;margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.seek{display:flex;gap:8px;align-items:center;color:var(--sub);font-size:12px}
+.seek input{flex:1;accent-color:var(--ac)}
+.ctl{display:flex;justify-content:space-around;margin-top:8px}
+.ctl button{font-size:20px;min-width:52px}
+#msg{color:var(--sub);font-size:12px;text-align:center;padding:4px}
+</style></head><body>
+<header>
+<input id="q" type="search" placeholder="検索">
+<button id="add">＋ 追加</button>
+<input id="file" type="file" accept="audio/*,.mp3" multiple hidden>
+</header>
+<div id="msg"></div>
+<div id="list"></div>
+<footer>
+<div id="title">曲を追加してね</div>
+<div class="seek"><span id="cur">0:00</span><input id="seek" type="range" min="0" max="1000" value="0"><span id="dur">0:00</span></div>
+<div class="ctl">
+<button id="shuf" class="on">🔀</button><button id="prev">⏮</button><button id="play">▶</button><button id="next">⏭</button><button id="rep">🔁</button>
+</div></footer>
+<audio id="au" preload="auto"></audio>
+<script>
+const $=s=>document.querySelector(s),au=$('#au');
+let db,tracks=[],order=[],pos=-1,shuffle=true,repeat=0,url=null; // repeat 0:なし 1:全曲 2:1曲
+const REP=['🔁','🔁','🔂'];
+const open=()=>new Promise((ok,ng)=>{const r=indexedDB.open('mp3p',1);r.onupgradeneeded=()=>r.result.createObjectStore('t',{keyPath:'id',autoIncrement:true});r.onsuccess=()=>ok(r.result);r.onerror=()=>ng(r.error)});
+const tx=(m,f)=>new Promise((ok,ng)=>{const t=db.transaction('t',m),s=t.objectStore('t'),r=f(s);t.oncomplete=()=>ok(r.result);t.onerror=()=>ng(t.error)});
+async function load(){
+  const all=await tx('readonly',s=>s.getAll());
+  tracks=all.map(({id,name})=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name,'ja',{numeric:true}));
+  mkOrder();render();
+}
+function mkOrder(){
+  const cur=pos>=0?order[pos]:-1;
+  order=tracks.map((_,i)=>i);
+  if(shuffle){for(let i=order.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[order[i],order[j]]=[order[j],order[i]]}
+    if(cur>=0){const k=order.indexOf(cur);[order[0],order[k]]=[order[k],order[0]];pos=0}}
+  else if(cur>=0)pos=order.indexOf(cur);
+}
+function render(){
+  const q=$('#q').value.trim().toLowerCase(),cid=pos>=0?tracks[order[pos]]?.id:null;
+  const el=$('#list');el.innerHTML='';
+  if(!tracks.length){el.innerHTML='<div id="empty">まだ曲がないよ<br>「＋ 追加」からmp3を選んでね<br>（一度入れればオフラインで使える）</div>';return}
+  tracks.forEach((t,i)=>{
+    if(q&&!t.name.toLowerCase().includes(q))return;
+    const d=document.createElement('div');d.className='t'+(t.id===cid?' cur':'');
+    d.innerHTML='<span class="n"></span><button class="x">✕</button>';
+    d.querySelector('.n').textContent=t.name;
+    d.onclick=()=>{pos=order.indexOf(i);playPos()};
+    d.querySelector('.x').onclick=async e=>{e.stopPropagation();if(!confirm('削除する？\n'+t.name))return;
+      if(t.id===cid){au.pause();au.removeAttribute('src');pos=-1}
+      await tx('readwrite',s=>s.delete(t.id));await load()};
+    el.appendChild(d);
+  });
+}
+async function playPos(){
+  if(pos<0||pos>=order.length)return;
+  const t=tracks[order[pos]],rec=await tx('readonly',s=>s.get(t.id));
+  if(!rec)return;
+  if(url)URL.revokeObjectURL(url);
+  url=URL.createObjectURL(rec.blob);au.src=url;
+  try{await au.play()}catch(e){}
+  $('#title').textContent=t.name;render();
+  if('mediaSession'in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:t.name,artist:'MP3 Player'});
+  const cur=document.querySelector('.t.cur');cur&&cur.scrollIntoView({block:'nearest'});
+}
+function next(auto){
+  if(!order.length)return;
+  if(auto&&repeat===2){au.currentTime=0;au.play();return}
+  if(pos+1>=order.length){
+    if(repeat===1||!auto){mkOrder();if(shuffle)pos=-1;pos=0;playPos()}else{pos=order.length-1;$('#play').textContent='▶'}
+    return}
+  pos++;playPos();
+}
+function prev(){if(au.currentTime>3||pos<=0){au.currentTime=0}else{pos--;playPos()}}
+const fmt=s=>isFinite(s)?(s/60|0)+':'+String(s%60|0).padStart(2,'0'):'0:00';
+$('#add').onclick=()=>$('#file').click();
+$('#file').onchange=async e=>{
+  const fs=[...e.target.files];let n=0;
+  for(const f of fs){$('#msg').textContent=`取り込み中 ${++n}/${fs.length}`;
+    await tx('readwrite',s=>s.add({name:f.name.replace(/\.[^.]+$/,''),blob:f}));}
+  $('#msg').textContent='';e.target.value='';
+  if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();
+  await load();
+};
+$('#q').oninput=render;
+$('#play').onclick=()=>{if(!au.src){if(order.length){pos=0;playPos()}}else au.paused?au.play():au.pause()};
+$('#next').onclick=()=>next(false);$('#prev').onclick=prev;
+$('#shuf').onclick=()=>{shuffle=!shuffle;$('#shuf').classList.toggle('on',shuffle);mkOrder();render()};
+$('#rep').onclick=()=>{repeat=(repeat+1)%3;$('#rep').textContent=REP[repeat];$('#rep').classList.toggle('on',repeat>0)};
+au.onplay=()=>$('#play').textContent='⏸';au.onpause=()=>$('#play').textContent='▶';
+au.onended=()=>next(true);
+au.ontimeupdate=()=>{$('#cur').textContent=fmt(au.currentTime);$('#dur').textContent=fmt(au.duration);
+  if(au.duration&&!seeking)$('#seek').value=au.currentTime/au.duration*1000};
+let seeking=false;const sk=$('#seek');
+sk.oninput=()=>{seeking=true};sk.onchange=()=>{au.currentTime=sk.value/1000*au.duration;seeking=false};
+if('mediaSession'in navigator){const m=navigator.mediaSession;
+  m.setActionHandler('play',()=>au.play());m.setActionHandler('pause',()=>au.pause());
+  m.setActionHandler('nexttrack',()=>next(false));m.setActionHandler('previoustrack',prev);}
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');
+open().then(d=>{db=d;load()});
+</script></body></html>
