@@ -11,12 +11,11 @@
 <title>MP3 Player</title>
 <style>
 :root{--bg:#111418;--card:#1b2027;--fg:#eef1f5;--sub:#8b95a3;--ac:#ff8a3d}
-*{box-sizing:border-box}html,body{height:100%;margin:0}
-body{background:var(--bg);color:var(--fg);font-family:-apple-system,system-ui,sans-serif;display:flex;flex-direction:column;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:-apple-system,system-ui,sans-serif;display:flex;flex-direction:column;padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left)}
 header{display:flex;gap:8px;padding:12px;align-items:center}
 header input[type=search]{flex:1;padding:10px 12px;border-radius:10px;border:0;background:var(--card);color:var(--fg);font-size:16px}
 button{font:inherit;color:var(--fg);background:var(--card);border:0;border-radius:10px;padding:10px 14px;cursor:pointer}
-button.on{background:var(--ac);color:#111}
 #list{flex:1;overflow-y:auto;padding:0 12px}
 .t{display:flex;align-items:center;gap:8px;padding:12px;border-radius:10px;margin-bottom:4px}
 .t.cur{background:var(--card);color:var(--ac)}
@@ -24,11 +23,18 @@ button.on{background:var(--ac);color:#111}
 .t .x{background:none;color:var(--sub);padding:6px 10px}
 #empty{color:var(--sub);text-align:center;margin-top:20vh;line-height:1.8}
 footer{background:var(--card);padding:12px 16px calc(12px + env(safe-area-inset-bottom));border-radius:18px 18px 0 0}
-#title{text-align:center;margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.seek{display:flex;gap:8px;align-items:center;color:var(--sub);font-size:12px}
-.seek input{flex:1;accent-color:var(--ac)}
-.ctl{display:flex;justify-content:space-around;margin-top:8px}
-.ctl button{font-size:20px;min-width:52px}
+#title{text-align:center;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.seek{display:flex;gap:10px;align-items:center;color:var(--sub);font-size:12px;font-variant-numeric:tabular-nums}
+#bar{flex:1;height:44px;position:relative;touch-action:none;user-select:none;-webkit-user-select:none;cursor:pointer}
+#trk{position:absolute;left:0;right:0;top:50%;height:4px;margin-top:-2px;background:#3a424d;border-radius:2px;overflow:hidden}
+#fill{height:100%;width:0;background:var(--ac)}
+#knob{position:absolute;top:50%;left:0;width:18px;height:18px;margin:-9px 0 0 -9px;border-radius:50%;background:#fff;box-shadow:0 1px 4px #0008}
+.ctl{display:flex;justify-content:space-between;align-items:center;margin-top:4px}
+.ctl button{background:none;padding:8px;width:48px;height:48px;display:flex;align-items:center;justify-content:center;color:var(--fg)}
+.ctl button svg{width:30px;height:30px;fill:currentColor}
+.ctl button.on{color:var(--ac)}
+.ctl #play{background:var(--ac);color:#111;border-radius:50%;width:60px;height:60px}
+.ctl #play svg{width:36px;height:36px}
 #msg{color:var(--sub);font-size:12px;text-align:center;padding:4px}
 </style></head><body>
 <header>
@@ -40,21 +46,44 @@ footer{background:var(--card);padding:12px 16px calc(12px + env(safe-area-inset-
 <div id="list"></div>
 <footer>
 <div id="title">曲を追加してね</div>
-<div class="seek"><span id="cur">0:00</span><input id="seek" type="range" min="0" max="1000" value="0"><span id="dur">0:00</span></div>
+<div class="seek"><span id="cur">0:00</span>
+<div id="bar"><div id="trk"><div id="fill"></div></div><div id="knob"></div></div>
+<span id="dur">0:00</span></div>
 <div class="ctl">
-<button id="shuf" class="on">🔀</button><button id="prev">⏮</button><button id="play">▶</button><button id="next">⏭</button><button id="rep">🔁</button>
+<button id="shuf" class="on" aria-label="シャッフル"></button>
+<button id="back" aria-label="10秒戻る"></button>
+<button id="prev" aria-label="前の曲"></button>
+<button id="play" aria-label="再生"></button>
+<button id="next" aria-label="次の曲"></button>
+<button id="fwd" aria-label="10秒進む"></button>
+<button id="rep" aria-label="リピート"></button>
 </div></footer>
-<audio id="au" preload="auto"></audio>
+<audio id="au" preload="auto" playsinline></audio>
 <script>
 const $=s=>document.querySelector(s),au=$('#au');
-let db,tracks=[],order=[],pos=-1,shuffle=true,repeat=0,url=null; // repeat 0:なし 1:全曲 2:1曲
-const REP=['🔁','🔁','🔂'];
+const svg=(p,x='')=>`<svg viewBox="0 0 24 24">${p}${x}</svg>`;
+const num=`<text x="12" y="15.6" font-size="7.5" font-weight="700" text-anchor="middle" fill="currentColor" style="font-family:-apple-system,sans-serif">10</text>`;
+const IC={
+play:svg('<path d="M8 5v14l11-7z"/>'),
+pause:svg('<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>'),
+next:svg('<path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>'),
+prev:svg('<path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>'),
+shuf:svg('<path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/>'),
+rep:svg('<path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/>'),
+rep1:svg('<path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z"/>'),
+back:svg('<path d="M12 5V1L7 6l5 5V7c3.3 0 6 2.7 6 6s-2.7 6-6 6-6-2.7-6-6H4c0 4.4 3.6 8 8 8s8-3.6 8-8-3.6-8-8-8z"/>',num),
+fwd:svg('<path d="M12 5V1l5 5-5 5V7c-3.3 0-6 2.7-6 6s2.7 6 6 6 6-2.7 6-6h2c0 4.4-3.6 8-8 8s-8-3.6-8-8 3.6-8 8-8z"/>',num)};
+['shuf','back','prev','next','fwd'].forEach(k=>$('#'+k).innerHTML=IC[k]);
+$('#play').innerHTML=IC.play;$('#rep').innerHTML=IC.rep;
+
+let db,tracks=[],order=[],pos=-1,shuffle=true,repeat=0,req=0;
+const cache=new Map();
 const open=()=>new Promise((ok,ng)=>{const r=indexedDB.open('mp3p',1);r.onupgradeneeded=()=>r.result.createObjectStore('t',{keyPath:'id',autoIncrement:true});r.onsuccess=()=>ok(r.result);r.onerror=()=>ng(r.error)});
 const tx=(m,f)=>new Promise((ok,ng)=>{const t=db.transaction('t',m),s=t.objectStore('t'),r=f(s);t.oncomplete=()=>ok(r.result);t.onerror=()=>ng(t.error)});
 async function load(){
   const all=await tx('readonly',s=>s.getAll());
   tracks=all.map(({id,name})=>({id,name})).sort((a,b)=>a.name.localeCompare(b.name,'ja',{numeric:true}));
-  mkOrder();render();
+  mkOrder();render();preload();
 }
 function mkOrder(){
   const cur=pos>=0?order[pos]:-1;
@@ -74,32 +103,50 @@ function render(){
     d.querySelector('.n').textContent=t.name;
     d.onclick=()=>{pos=order.indexOf(i);playPos()};
     d.querySelector('.x').onclick=async e=>{e.stopPropagation();if(!confirm('削除する？\n'+t.name))return;
-      if(t.id===cid){au.pause();au.removeAttribute('src');pos=-1}
+      if(t.id===cid){au.pause();au.removeAttribute('src');pos=-1;$('#title').textContent='曲を追加してね'}
       await tx('readwrite',s=>s.delete(t.id));await load()};
     el.appendChild(d);
   });
 }
-async function playPos(){
-  if(pos<0||pos>=order.length)return;
-  const t=tracks[order[pos]],rec=await tx('readonly',s=>s.get(t.id));
-  if(!rec)return;
-  if(url)URL.revokeObjectURL(url);
-  url=URL.createObjectURL(rec.blob);au.src=url;
-  try{await au.play()}catch(e){}
+// 前後の曲を先にメモリへ読んでおく → バックグラウンドでも同期的に曲を切り替えられる
+async function getUrl(i){
+  const t=tracks[i];if(!t)return null;
+  if(cache.has(t.id))return cache.get(t.id);
+  const rec=await tx('readonly',s=>s.get(t.id));if(!rec)return null;
+  const u=URL.createObjectURL(rec.blob);cache.set(t.id,u);return u;
+}
+async function preload(){
+  if(pos<0)return;
+  const idx=[order[pos],order[pos+1],order[pos-1]].filter(v=>v!==undefined);
+  const keep=new Set(idx.map(i=>tracks[i]?.id));
+  for(const i of idx)await getUrl(i);
+  for(const [id,u] of cache)if(!keep.has(id)){URL.revokeObjectURL(u);cache.delete(id)}
+}
+function start(t,u){
+  au.src=u;au.play().catch(()=>{});
   $('#title').textContent=t.name;render();
-  if('mediaSession'in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:t.name,artist:'MP3 Player'});
-  const cur=document.querySelector('.t.cur');cur&&cur.scrollIntoView({block:'nearest'});
+  if('mediaSession'in navigator)navigator.mediaSession.metadata=new MediaMetadata({title:t.name,artist:'MP3 Player',artwork:[{src:'icon-512.png',sizes:'512x512',type:'image/png'}]});
+  const c=document.querySelector('.t.cur');c&&c.scrollIntoView({block:'nearest'});
+  preload();
+}
+function playPos(){
+  if(pos<0||pos>=order.length)return;
+  const i=order[pos],t=tracks[i],u=cache.get(t.id),my=++req;
+  if(u)start(t,u);else getUrl(i).then(u=>{if(u&&my===req)start(t,u)});
 }
 function next(auto){
   if(!order.length)return;
   if(auto&&repeat===2){au.currentTime=0;au.play();return}
   if(pos+1>=order.length){
-    if(repeat===1||!auto){mkOrder();if(shuffle)pos=-1;pos=0;playPos()}else{pos=order.length-1;$('#play').textContent='▶'}
+    if(repeat===1||!auto){pos=-1;mkOrder();pos=0;playPos()}
+    else{au.pause()}
     return}
   pos++;playPos();
 }
 function prev(){if(au.currentTime>3||pos<=0){au.currentTime=0}else{pos--;playPos()}}
+const skip=d=>{if(au.duration)au.currentTime=Math.max(0,Math.min(au.duration,au.currentTime+d))};
 const fmt=s=>isFinite(s)?(s/60|0)+':'+String(s%60|0).padStart(2,'0'):'0:00';
+
 $('#add').onclick=()=>$('#file').click();
 $('#file').onchange=async e=>{
   const fs=[...e.target.files];let n=0;
@@ -112,17 +159,30 @@ $('#file').onchange=async e=>{
 $('#q').oninput=render;
 $('#play').onclick=()=>{if(!au.src){if(order.length){pos=0;playPos()}}else au.paused?au.play():au.pause()};
 $('#next').onclick=()=>next(false);$('#prev').onclick=prev;
-$('#shuf').onclick=()=>{shuffle=!shuffle;$('#shuf').classList.toggle('on',shuffle);mkOrder();render()};
-$('#rep').onclick=()=>{repeat=(repeat+1)%3;$('#rep').textContent=REP[repeat];$('#rep').classList.toggle('on',repeat>0)};
-au.onplay=()=>$('#play').textContent='⏸';au.onpause=()=>$('#play').textContent='▶';
+$('#back').onclick=()=>skip(-10);$('#fwd').onclick=()=>skip(10);
+$('#shuf').onclick=()=>{shuffle=!shuffle;$('#shuf').classList.toggle('on',shuffle);mkOrder();render();preload()};
+$('#rep').onclick=()=>{repeat=(repeat+1)%3;$('#rep').innerHTML=repeat===2?IC.rep1:IC.rep;$('#rep').classList.toggle('on',repeat>0)};
+au.onplay=()=>$('#play').innerHTML=IC.pause;au.onpause=()=>$('#play').innerHTML=IC.play;
 au.onended=()=>next(true);
-au.ontimeupdate=()=>{$('#cur').textContent=fmt(au.currentTime);$('#dur').textContent=fmt(au.duration);
-  if(au.duration&&!seeking)$('#seek').value=au.currentTime/au.duration*1000};
-let seeking=false;const sk=$('#seek');
-sk.oninput=()=>{seeking=true};sk.onchange=()=>{au.currentTime=sk.value/1000*au.duration;seeking=false};
+
+// シークバー：バーのどこを触っても、指に合わせてつまみが動く
+const bar=$('#bar');let seeking=false;
+function ui(r){$('#fill').style.width=r*100+'%';$('#knob').style.left=r*100+'%'}
+function ratio(e){const b=bar.getBoundingClientRect();return Math.max(0,Math.min(1,(e.clientX-b.left)/b.width))}
+bar.addEventListener('pointerdown',e=>{if(!au.duration)return;seeking=true;bar.setPointerCapture(e.pointerId);const r=ratio(e);ui(r);$('#cur').textContent=fmt(r*au.duration);e.preventDefault()});
+bar.addEventListener('pointermove',e=>{if(!seeking)return;const r=ratio(e);ui(r);$('#cur').textContent=fmt(r*au.duration)});
+const endSeek=e=>{if(!seeking)return;seeking=false;au.currentTime=ratio(e)*au.duration};
+bar.addEventListener('pointerup',endSeek);
+bar.addEventListener('pointercancel',()=>{seeking=false});
+function pstate(){try{if(au.duration)navigator.mediaSession.setPositionState({duration:au.duration,position:au.currentTime,playbackRate:au.playbackRate})}catch(e){}}
+au.ontimeupdate=()=>{if(seeking)return;$('#cur').textContent=fmt(au.currentTime);$('#dur').textContent=fmt(au.duration);
+  if(au.duration)ui(au.currentTime/au.duration)};
+au.onloadedmetadata=()=>{$('#dur').textContent=fmt(au.duration);pstate()};
+au.onseeked=pstate;
 if('mediaSession'in navigator){const m=navigator.mediaSession;
   m.setActionHandler('play',()=>au.play());m.setActionHandler('pause',()=>au.pause());
-  m.setActionHandler('nexttrack',()=>next(false));m.setActionHandler('previoustrack',prev);}
+  m.setActionHandler('nexttrack',()=>next(false));m.setActionHandler('previoustrack',prev);
+  m.setActionHandler('seekto',d=>{if(d.seekTime!=null)au.currentTime=d.seekTime});}
 if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');
 open().then(d=>{db=d;load()});
 </script></body></html>
